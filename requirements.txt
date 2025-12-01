@@ -1,0 +1,14 @@
+# API
+fastapi
+uvicorn
+
+# RAG & LLM
+langchain
+pydantic
+faiss-cpu
+sentence-transformers
+transformers
+torch
+
+# PDF Loader
+pypdf
