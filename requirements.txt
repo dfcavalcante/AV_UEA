@@ -4,6 +4,8 @@ uvicorn
 
 # RAG & LLM
 langchain
+langchain-community
+langchain-text-splitters
 pydantic
 faiss-cpu
 sentence-transformers
