@@ -1,3 +1,5 @@
+# pip install -r requirements.txt
+
 # API
 fastapi
 uvicorn
@@ -9,7 +11,7 @@ langchain-text-splitters
 pydantic
 faiss-cpu
 sentence-transformers
-transformers
+llama-cpp-python
 torch
 
 # PDF Loader
