@@ -27,7 +27,7 @@ EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
 # Funções do Pipeline
 def download_pdfs(pdf_urls, target_dir):
-    #Baixa os PDFs se eles ainda não existirem localmente
+    # Baixa os PDFs se eles ainda não existirem localmente
     os.makedirs(target_dir, exist_ok=True)
     print(f"\nBaixando PDFs para '{target_dir}'")
     

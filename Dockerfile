@@ -28,7 +28,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copia do Código e Estrutura de Dados
 COPY src/ /app/src/
-# Copia os PDFs fornecidos para o container (se já estiverem na pasta do host)
+# Copia os PDFs fornecidos para o container
 COPY data/pdfs/ /app/data/pdfs/
 # Cria os diretórios necessários
 RUN mkdir -p /app/data/vectorstore /app/data/models

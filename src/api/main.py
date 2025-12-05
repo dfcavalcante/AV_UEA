@@ -15,7 +15,6 @@ class Answer(BaseModel):
 
 @app.on_event("startup")
 async def startup_event():
-    # CORREÇÃO: Verificamos FAISS_INDEX na inicialização
     if LLM_INSTANCE is None or FAISS_INDEX is None:
         print("CRITICAL: Falha na inicialização do LLM ou FAISS. Verifique logs.")
 
