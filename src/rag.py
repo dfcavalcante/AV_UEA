@@ -6,25 +6,29 @@ from langchain_community.llms import LlamaCpp
 
 VECTOR_STORE_DIR = os.path.join("data", "vectorstore")
 
-# --- Configurações ---
-GGUF_MODEL_NAME = "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf" 
+# --- Configurações Qwen 2.5 1.5B GGUF ---
+GGUF_MODEL_NAME = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
 GGUF_MODEL_PATH = os.path.join("data", "models", GGUF_MODEL_NAME)
+
 LLAMA_N_GPU_LAYERS = 0   
-LLAMA_N_CTX = 2048       
-MAX_NEW_TOKENS = 256     
-TOP_K = 5 
-SCORE_THRESHOLD = 1.0 
+LLAMA_N_CTX = 4096       
+MAX_NEW_TOKENS = 1024    
+TOP_K = 7 
 
-PROMPT_TEMPLATE = """[INST] Use o contexto abaixo para responder. Se a resposta não estiver no texto, diga "Informação não encontrada".
-
+# Prompt Template
+PROMPT_TEMPLATE = """<|im_start|>system
+Você é o Assistente Virtual da UEA. Responda com base no contexto fornecido.
+Se a informação não estiver no contexto, diga APENAS: "A informação não consta nos documentos consultados."<|im_end|>
+<|im_start|>user
 Contexto:
 {context}
 
-Pergunta: {question} [/INST]
+Pergunta: {question}<|im_end|>
+<|im_start|>assistant
 """
 
 def initialize_llm():
-    print(f"Carregando LLM GGUF...", flush=True)
+    print(f"Carregando LLM (Qwen 2.5 GGUF)...", flush=True)
     try:
         llm = LlamaCpp(
             model_path=GGUF_MODEL_PATH,
@@ -33,8 +37,8 @@ def initialize_llm():
             temperature=0.1, 
             max_tokens=MAX_NEW_TOKENS,
             echo=False,
-            repeat_penalty=1.1,
-            stop=["[/INST]", "</s>", "Contexto:", "Pergunta:"]
+            repeat_penalty=1.15,
+            stop=["<|im_end|>", "<|endoftext|>", "Contexto:", "Pergunta:"]
         )
         return llm 
     except Exception as e:
@@ -44,7 +48,7 @@ def initialize_llm():
 def initialize_vector_store():
     print(f"Carregando FAISS...", flush=True)
     try:
-        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
         vector_store = FAISS.load_local(VECTOR_STORE_DIR, embeddings, allow_dangerous_deserialization=True)
         return vector_store
     except Exception as e:
@@ -61,24 +65,18 @@ def get_rag_answer(question: str) -> str:
     try:
         print(f"\n--- Pergunta: {question} ---", flush=True)
         
-        # Busca com Score
+        # Recuperação
         results_with_scores = FAISS_INDEX.similarity_search_with_score(question, k=TOP_K)
         
         if not results_with_scores:
             return "A informação não consta nos documentos consultados."
 
-        # Filtra documentos
         relevant_docs = []
-        print("DEBUG SCORES:", flush=True)
-        for doc, score in results_with_scores:
-            # Score menor = mais similar. 
-            print(f"   - Score: {score:.4f} | Texto: {doc.page_content[:30]}...", flush=True)
-            if score < SCORE_THRESHOLD:
-                relevant_docs.append(doc)
-        
-        if not relevant_docs:
-            print("   -> Bloqueado pelo filtro de relevância.", flush=True)
-            return "A informação não consta nos documentos consultados."
+        print("DEBUG SCORES (Sem Filtro):", flush=True)
+        for i, (doc, score) in enumerate(results_with_scores):
+            # Mostra o score para debug
+            print(f"   [{i+1}] Score: {score:.4f} | Texto: {doc.page_content[:40].replace(chr(10), ' ')}...", flush=True)
+            relevant_docs.append(doc)
 
         context_text = "\n---\n".join([doc.page_content for doc in relevant_docs])
         final_prompt = PROMPT_TEMPLATE.format(context=context_text, question=question)
@@ -86,16 +84,7 @@ def get_rag_answer(question: str) -> str:
         print(f"Gerando resposta...", flush=True)
         answer = LLM_INSTANCE.invoke(final_prompt)
         
-        # Limpeza
-        if "[/INST]" in answer:
-            answer = answer.split("[/INST]")[-1]
-        
-        answer = answer.strip()
-
-        if "Use o contexto abaixo" in answer or "Se a resposta não estiver" in answer:
-            return "A informação não consta nos documentos consultados."
-
-        return answer
+        return answer.strip()
         
     except Exception as e:
         print(f"ERRO: {e}", flush=True)
