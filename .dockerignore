@@ -1,0 +1,12 @@
+venv/
+.venv/
+.vscode/
+.idea/
+.git/
+pycache/
+*.pyc
+*.pyo
+*.pyd
+.env
+data/models/
+data/vectorstore/
