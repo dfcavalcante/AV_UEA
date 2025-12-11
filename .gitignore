@@ -6,3 +6,5 @@ venv/
 
 # IDEs
 .vscode/
+.dockerignore
+Dockerfile

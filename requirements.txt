@@ -1,7 +1,13 @@
+fastapi
+uvicorn
+pydantic
+python-multipart
 sentence-transformers
 transformers
-torch
-faiss-cpu
+accelerate
 pymupdf
 numpy
-accelerate
+faiss-cpu
+torch --index-url https://download.pytorch.org/whl/cpu
+torchvision --index-url https://download.pytorch.org/whl/cpu
+torchaudio --index-url https://download.pytorch.org/whl/cpu
