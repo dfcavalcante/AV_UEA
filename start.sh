@@ -19,7 +19,10 @@ else
     echo "Banco vetorial FAISS encontrado. Pulando etapa de ingestão."
 fi
 
-# Inicia o servidor FastAPI
+# Inicia o servidor FastAPI (uvicorn)
 echo "Iniciando servidor Uvicorn..."
-echo "Para acessar, use: http://localhost:8000/docs"
-exec uvicorn api.main:app --host 0.0.0.0 --port 8000
+echo "Servidor Online! Acesse a documentação em:"
+echo "http://localhost:8000/docs" 
+echo "(Pressione CTRL+C para parar)"
+
+exec uvicorn api.main:app --host 0.0.0.0 --port 8000 --log-level warning
