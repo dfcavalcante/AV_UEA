@@ -7,14 +7,16 @@ from sentence_transformers import SentenceTransformer
 from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM
 import sys
 
+# Caminho para ler o config.py
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import config
 
 class RAGPipeline:
     def __init__(self):
-        print(f"  Carregando RAG na {config.DEVICE}...")
+        print(f"Carregando RAG na {config.DEVICE}...")
         self.embedder = SentenceTransformer(config.EMBEDDING_MODEL_ID)
 
+        # Carrega índice e dados
         try:
             self.index = faiss.read_index(os.path.join(config.VECTORSTORE_PATH, "index.faiss"))
             with open(os.path.join(config.VECTORSTORE_PATH, "chunks.pkl"), "rb") as f:
@@ -22,12 +24,13 @@ class RAGPipeline:
         except:
             raise FileNotFoundError("Erro: Rode o 'python src/ingest.py' primeiro!")
 
-        print(f" Carregando LLM: {config.LLM_MODEL_ID}")
+        # LLM
+        print(f"Carregando LLM: {config.LLM_MODEL_ID}")
         tokenizer = AutoTokenizer.from_pretrained(config.LLM_MODEL_ID)
         model = AutoModelForCausalLM.from_pretrained(
             config.LLM_MODEL_ID,
             device_map=config.DEVICE,
-            torch_dtype=torch.float32,
+            dtype=torch.float32, 
             low_cpu_mem_usage=True
         )
         self.llm = pipeline(
@@ -35,13 +38,13 @@ class RAGPipeline:
             model=model,
             tokenizer=tokenizer,
             max_new_tokens=config.GEN_CONFIG["max_new_tokens"],
-            temperature=0.1,
-            do_sample=True,
+            temperature=config.GEN_CONFIG["temperature"], 
+            do_sample=config.GEN_CONFIG["do_sample"],
             return_full_text=False
         )
 
+    # Dá pontos extras se as palavras da pergunta existirem no texto
     def _keyword_score(self, text, query):
-        """Dá pontos extras se as palavras da query existirem no texto"""
         score = 0
         text_lower = text.lower()
         stopwords = ["o", "a", "os", "as", "de", "do", "da", "que", "é", "em", "para", "qual", "como"]
@@ -49,21 +52,19 @@ class RAGPipeline:
         
         for word in keywords:
             if word in text_lower:
-                score += 10 
+                score += 10
         return score
 
     def get_answer(self, query):
-        # 1. BUSCA AMPLA (Deep Retrieval)
+        
+        # Busca ampla
         k_search = 100
         query_vec = self.embedder.encode([query]).astype("float32")
         distances, indices = self.index.search(query_vec, k_search)
         
-        candidates = []
-        for idx in indices[0]:
-            if idx < len(self.chunks_data):
-                candidates.append(self.chunks_data[idx])
+        candidates = [self.chunks_data[i] for i in indices[0] if i < len(self.chunks_data)]
 
-        # 2. RE-RANKING HÍBRIDO
+        # RE-RANKING HÍBRIDO
         ranked_candidates = []
         for c in candidates:
             priority_score = 0
@@ -83,25 +84,23 @@ class RAGPipeline:
             ranked_candidates.append((total_score, c))
 
         ranked_candidates.sort(key=lambda x: x[0], reverse=True)
+        
+        # Pega os Top K finais (o mais relevante)
         top_chunks = [item[1] for item in ranked_candidates[:config.RETRIEVAL_K]]
 
-        # 3. CONTEXTO E DEBUG (Limpo)
-        print(f"\n Contexto Selecionado ({len(top_chunks)} trechos):")
+        # CONSTRUÇÃO DO CONTEXTO
         context_text = ""
         for c in top_chunks:
-            # Debug limpo apenas com nome do arquivo e inicio do texto
-            clean_preview = c['text'][:60].replace('\n', ' ')
-            print(f"   [{c['source']}]: {clean_preview}...")
-            
+            # Incluímos a fonte no contexto
             context_text += f"FONTE: {c['source']}\nCONTEÚDO: {c['text']}\n---\n"
 
-        # 4. GERAÇÃO
+        # GERAÇÃO (Prompt Factual)
         prompt = f"""<|im_start|>system
-Você é um assistente da UEA. Responda à pergunta usando APENAS o contexto abaixo.
-Cite os itens listados no texto fielmente.
-Se não souber, diga "Não consta no texto". Responda em Português.<|im_end|>
+Você é um assistente virtual especializado da Universidade do Estado do Amazonas (UEA). Responda à pergunta usando APENAS o contexto abaixo.
+Se a resposta não estiver no CONTEÚDO, diga "A informação não consta nos documentos consultados".
+Responda em Português.<|im_end|>
 <|im_start|>user
-Contexto:
+Contexto Oficial:
 {context_text}
 
 Pergunta:

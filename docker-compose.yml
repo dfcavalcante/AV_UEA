@@ -1,0 +1,26 @@
+version: '3.8'
+services:
+  assistente_uea_rag:
+    # Builda a imagem usando o Dockerfile na pasta atual
+    build: .
+    # Nome da imagem que será criada localmente
+    image: assistente-uea:latest
+    container_name: assistente-uea
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persiste os arquivos do FAISS no  vectorstore_data no host
+      # Se o volume já existir o start.sh não roda a ingestão novamente
+      - vectorstore_data:/app/data/vectorstore
+
+    # Define o número de threads que pode usar
+    environment:
+      - OMP_NUM_THREADS=4
+      - APP_ENV=docker
+    restart: unless-stopped
+    
+# Define o volume para persistência
+volumes:
+  vectorstore_data:
+    # Volume externo para garantir que os dados não sumam ao apagar o container
+    external: false

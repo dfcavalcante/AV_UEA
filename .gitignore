@@ -1,10 +1,7 @@
-# Python
 __pycache__/
 *.pyc
 venv/
 .venv/
-
-# IDEs
 .vscode/
-.dockerignore
-Dockerfile
+data/vectorstore/
+
