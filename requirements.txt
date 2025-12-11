@@ -1,11 +1,7 @@
-fastapi
-uvicorn
-langchain
-langchain-community
-langchain-text-splitters
-pydantic
-faiss-cpu
 sentence-transformers
-llama-cpp-python
-langchain-huggingface
-pypdf
+transformers
+torch
+faiss-cpu
+pymupdf
+numpy
+accelerate

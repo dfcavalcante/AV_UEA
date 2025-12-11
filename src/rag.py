@@ -1,135 +1,112 @@
+import faiss
+import pickle
+import numpy as np
 import os
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.llms import LlamaCpp
+import torch
+from sentence_transformers import SentenceTransformer
+from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM
+import sys
 
-# --- Configuração de Caminhos ---
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(CURRENT_DIR) 
-DATA_DIR = os.path.join(PROJECT_ROOT, "data")
-VECTOR_STORE_DIR = os.path.join(DATA_DIR, "vectorstore")
-MODELS_DIR = os.path.join(DATA_DIR, "models")
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import config
 
-# --- Configurações do Modelo ---
-GGUF_MODEL_NAME = "gemma-2-2b-it-Q4_K_M.gguf"
-GGUF_MODEL_PATH = os.path.join(MODELS_DIR, GGUF_MODEL_NAME)
+class RAGPipeline:
+    def __init__(self):
+        print(f"  Carregando RAG na {config.DEVICE}...")
+        self.embedder = SentenceTransformer(config.EMBEDDING_MODEL_ID)
 
-# Parâmetros de Geração
-LLAMA_N_GPU_LAYERS = 0   # 0 para CPU, aumentar se tiver GPU
-LLAMA_N_CTX = 4096       # Janela de contexto do Gemma
-MAX_NEW_TOKENS = 1024    
-TOP_K = 10               
+        try:
+            self.index = faiss.read_index(os.path.join(config.VECTORSTORE_PATH, "index.faiss"))
+            with open(os.path.join(config.VECTORSTORE_PATH, "chunks.pkl"), "rb") as f:
+                self.chunks_data = pickle.load(f)
+        except:
+            raise FileNotFoundError("Erro: Rode o 'python src/ingest.py' primeiro!")
 
-# --- Prompt Template ---
-PROMPT_TEMPLATE = """<start_of_turn>user
-Você é o Assistente Virtual da UEA. Responda APENAS com base no contexto fornecido abaixo.
+        print(f" Carregando LLM: {config.LLM_MODEL_ID}")
+        tokenizer = AutoTokenizer.from_pretrained(config.LLM_MODEL_ID)
+        model = AutoModelForCausalLM.from_pretrained(
+            config.LLM_MODEL_ID,
+            device_map=config.DEVICE,
+            torch_dtype=torch.float32,
+            low_cpu_mem_usage=True
+        )
+        self.llm = pipeline(
+            "text-generation",
+            model=model,
+            tokenizer=tokenizer,
+            max_new_tokens=config.GEN_CONFIG["max_new_tokens"],
+            temperature=0.1,
+            do_sample=True,
+            return_full_text=False
+        )
 
-Diretrizes:
-1. Responda em Português do Brasil de forma clara.
-2. Se a informação não estiver no texto, diga: "A informação não consta nos documentos consultados."
-3. Cite o artigo ou parágrafo se estiver explícito no texto.
-
-Contexto:
-{context}
-
-Pergunta: {question}<end_of_turn>
-<start_of_turn>model
-"""
-
-# --- Variáveis Globais ---
-LLM_INSTANCE = None
-FAISS_INDEX = None
-
-def initialize_resources():
-    """Inicializa LLM e FAISS apenas uma vez."""
-    global LLM_INSTANCE, FAISS_INDEX
-    
-    print("--- Inicializando Recursos RAG ---", flush=True)
-
-    # 1. Carregar LLM
-    if not LLM_INSTANCE:
-        if os.path.exists(GGUF_MODEL_PATH):
-            print(f"Carregando LLM: {GGUF_MODEL_NAME}...", flush=True)
-            try:
-                LLM_INSTANCE = LlamaCpp(
-                    model_path=GGUF_MODEL_PATH,
-                    n_ctx=LLAMA_N_CTX,
-                    n_gpu_layers=LLAMA_N_GPU_LAYERS,
-                    temperature=0.2, # Baixa temperatura para ser mais fiel ao texto
-                    max_tokens=MAX_NEW_TOKENS,
-                    echo=False,
-                    stop=["<end_of_turn>", "user:", "model:"]
-                )
-            except Exception as e:
-                print(f"ERRO FATAL ao carregar LLM: {e}", flush=True)
-        else:
-            print(f"ERRO: Modelo não encontrado em {GGUF_MODEL_PATH}", flush=True)
-
-    # 2. Carregar Banco Vetorial (FAISS)
-    if not FAISS_INDEX:
-        if os.path.exists(VECTOR_STORE_DIR):
-            print("Carregando índice FAISS...", flush=True)
-            try:
-                embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
-                FAISS_INDEX = FAISS.load_local(VECTOR_STORE_DIR, embeddings, allow_dangerous_deserialization=True)
-            except Exception as e:
-                print(f"ERRO FATAL ao carregar FAISS: {e}", flush=True)
-        else:
-            print(f"ERRO: Pasta vectorstore não encontrada em {VECTOR_STORE_DIR}", flush=True)
-
-# Inicializa na importação (ou chame explicitamente no startup da API)
-initialize_resources()
-
-def get_rag_answer(question: str) -> str:
-    if not LLM_INSTANCE or not FAISS_INDEX:
-        return "Erro interno: O sistema de IA não foi inicializado corretamente (Modelo ou Banco de Dados ausentes)."
-
-    try:
-        print(f"\n{'='*40}", flush=True)
-        print(f"PERGUNTA: {question}", flush=True)
+    def _keyword_score(self, text, query):
+        """Dá pontos extras se as palavras da query existirem no texto"""
+        score = 0
+        text_lower = text.lower()
+        stopwords = ["o", "a", "os", "as", "de", "do", "da", "que", "é", "em", "para", "qual", "como"]
+        keywords = [k for k in query.lower().split() if k not in stopwords and len(k) > 3]
         
-        # --- LÓGICA DE FILTRO (ROUTING) ---
-        search_kwargs = {"k": TOP_K}
-        question_lower = question.lower()
+        for word in keywords:
+            if word in text_lower:
+                score += 10 
+        return score
+
+    def get_answer(self, query):
+        # 1. BUSCA AMPLA (Deep Retrieval)
+        k_search = 100
+        query_vec = self.embedder.encode([query]).astype("float32")
+        distances, indices = self.index.search(query_vec, k_search)
         
-        # IMPORTANTE: Os valores de 'source' devem bater EXATAMENTE com o que está no ingest.py
-        # ingest.py: doc.metadata["source"] = f"data/pdfs/{filename}"
-        
-        filtro_aplicado = "NENHUM (Busca Geral)"
-        
-        if "estatuto" in question_lower:
-            search_kwargs["filter"] = {"source": "data/pdfs/estatuto_uea.pdf"}
-            filtro_aplicado = "ESTATUTO UEA"
+        candidates = []
+        for idx in indices[0]:
+            if idx < len(self.chunks_data):
+                candidates.append(self.chunks_data[idx])
+
+        # 2. RE-RANKING HÍBRIDO
+        ranked_candidates = []
+        for c in candidates:
+            priority_score = 0
+            query_lower = query.lower()
+            source = c['source'].lower()
+
+            # Prioridade de Fonte
+            if "estatuto" in query_lower and "estatuto" in source:
+                priority_score += 1000
+            elif ("regimento" in query_lower or "casa" in query_lower) and "regimento" in source:
+                priority_score += 1000
             
-        elif any(termo in question_lower for termo in ["regimento", "casa do estudante", "moradia"]):
-            search_kwargs["filter"] = {"source": "data/pdfs/regimento_casas_estudante.pdf"}
-            filtro_aplicado = "REGIMENTO CASAS"
+            # Prioridade de Palavra-chave
+            keyword_points = self._keyword_score(c['text'], query)
+            
+            total_score = priority_score + keyword_points
+            ranked_candidates.append((total_score, c))
 
-        print(f"DEBUG: Filtro de Contexto -> {filtro_aplicado}", flush=True)
-        
-        # Recuperação
-        if "filter" in search_kwargs:
-            relevant_docs = FAISS_INDEX.similarity_search(question, **search_kwargs)
-        else:
-            relevant_docs = FAISS_INDEX.similarity_search(question, k=TOP_K)
-        
-        if not relevant_docs:
-            return "A informação não consta nos documentos consultados."
+        ranked_candidates.sort(key=lambda x: x[0], reverse=True)
+        top_chunks = [item[1] for item in ranked_candidates[:config.RETRIEVAL_K]]
 
-        # Debug dos trechos recuperados
-        print(f"DEBUG: {len(relevant_docs)} trechos recuperados.", flush=True)
-        
+        # 3. CONTEXTO E DEBUG (Limpo)
+        print(f"\n Contexto Selecionado ({len(top_chunks)} trechos):")
+        context_text = ""
+        for c in top_chunks:
+            # Debug limpo apenas com nome do arquivo e inicio do texto
+            clean_preview = c['text'][:60].replace('\n', ' ')
+            print(f"   [{c['source']}]: {clean_preview}...")
+            
+            context_text += f"FONTE: {c['source']}\nCONTEÚDO: {c['text']}\n---\n"
 
-        # Montagem do Contexto
-        context_text = "\n---\n".join([doc.page_content for doc in relevant_docs])
-        
-        # Geração
-        final_prompt = PROMPT_TEMPLATE.format(context=context_text, question=question)
-        print(f"Gerando resposta...", flush=True)
-        
-        answer = LLM_INSTANCE.invoke(final_prompt)
-        return answer.strip()
-        
-    except Exception as e:
-        print(f"ERRO NA GERAÇÃO: {e}", flush=True)
-        return "Desculpe, ocorreu um erro ao processar sua pergunta."
+        # 4. GERAÇÃO
+        prompt = f"""<|im_start|>system
+Você é um assistente da UEA. Responda à pergunta usando APENAS o contexto abaixo.
+Cite os itens listados no texto fielmente.
+Se não souber, diga "Não consta no texto". Responda em Português.<|im_end|>
+<|im_start|>user
+Contexto:
+{context_text}
+
+Pergunta:
+{query}<|im_end|>
+<|im_start|>assistant
+"""
+        outputs = self.llm(prompt)
+        return outputs[0]["generated_text"].strip()

@@ -1,65 +1,94 @@
 import os
-import glob
-from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings # Atualizado para evitar o warning
-from langchain_community.vectorstores import FAISS
+import fitz 
+import numpy as np
+import pickle
+import faiss
+from sentence_transformers import SentenceTransformer
+import sys
+import re 
 
-# --- CONFIGURAÇÃO DE CAMINHOS ---
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
-DATA_PATH = os.path.join(PROJECT_ROOT, 'data')
-PDFS_PATH = os.path.join(DATA_PATH, 'pdfs')
-VECTORSTORE_PATH = os.path.join(DATA_PATH, 'vectorstore')
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import config
 
-def create_vector_db():
-    print(f"--- Configuração de Caminhos ---")
-    print(f"Raiz do Projeto: {PROJECT_ROOT}")
-    print(f"Lendo PDFs de: {PDFS_PATH}")
-    print(f"Salvando Vectorstore em: {VECTORSTORE_PATH}\n")
-
-    # Verifica se a pasta de PDFs existe
-    if not os.path.exists(PDFS_PATH):
-        print(f"ERRO: A pasta {PDFS_PATH} não existe. Crie a pasta e coloque os PDFs lá.")
-        return
-
-    # Carregar PDFs
-    print("--- 1. Carregando PDFs ---")
-    loader = DirectoryLoader(PDFS_PATH, glob="*.pdf", loader_cls=PyPDFLoader)
-    documents = loader.load()
+# Remove cabeçalhos repetitivos e quebras de linha excessivas
+def clean_text(text):
+    lines = text.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        # Remove cabeçalhos comuns que sujam a busca
+        if "UNIVERSIDADE DO ESTADO DO AMAZONAS" in line:
+            continue
+        if len(line.strip()) < 5: # Pula linhas muito curtas
+            continue
+        cleaned_lines.append(line)
     
-    if not documents:
-        print("Nenhum documento encontrado.")
-        return
+    # Junta tudo de novo
+    return " ".join(cleaned_lines)
+
+def extract_text_from_pdf(pdf_path):
+    doc = fitz.open(pdf_path)
+    text = ""
+    for page in doc:
+        text += page.get_text()
+    return clean_text(text) # Limpeza aplicada
+
+def chunk_text(text, source_name):
+    chunks = []
+    start = 0
+    chunk_size = config.CHUNK_SIZE
+    overlap = config.CHUNK_OVERLAP
+
+    while start < len(text):
+        end = start + chunk_size
+        chunk_content = text[start:end]
         
-    print(f"> {len(documents)} páginas carregadas.")
+        chunks.append({
+            "text": chunk_content,
+            "source": source_name
+        })
+        start = end - overlap
+    return chunks
 
-    # Dividir em Chunks
-    print("--- 2. Dividindo em Chunks ---")
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200
-    )
-    texts = text_splitter.split_documents(documents)
-    print(f"> {len(texts)} chunks gerados.")
-
-    # Criar Vector Store
-    print("--- 3. Gerando Embeddings e Indexando ---")
+def ingest_data():
+    print(" Iniciando ingestão com LIMPEZA DE TEXTO...")
     
-    # Modelo Embedder
-    EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
+    all_chunks_data = [] 
+    texts_only = []      
 
-    vectorstore = FAISS.from_documents(texts, embeddings)
+    if not os.path.exists(config.PDF_DIR):
+        print("Pasta data/pdfs não encontrada.")
+        return
 
-    # Cria a pasta vectorstore se ela não existir
-    os.makedirs(VECTORSTORE_PATH, exist_ok=True)
-
-    # Salva
-    vectorstore.save_local(VECTORSTORE_PATH)
+    files = [f for f in os.listdir(config.PDF_DIR) if f.endswith(".pdf")]
     
-    print(f"\n--- SUCESSO! ---")
-    print(f"Banco vetorial salvo corretamente em: {VECTORSTORE_PATH}")
+    for file_name in files:
+        file_path = os.path.join(config.PDF_DIR, file_name)
+        print(f"    Lendo e Limpando: {file_name}")
+
+        full_text = extract_text_from_pdf(file_path)
+        file_chunks = chunk_text(full_text, file_name)
+        
+        all_chunks_data.extend(file_chunks)
+        texts_only.extend([c["text"] for c in file_chunks])
+        
+        print(f"      -> Gerou {len(file_chunks)} chunks.")
+
+    print(f"Gerando embeddings para {len(texts_only)} trechos...")
+    model = SentenceTransformer(config.EMBEDDING_MODEL_ID)
+    embeddings = model.encode(texts_only)
+    embeddings = np.array(embeddings).astype("float32")
+
+    print("Salvando banco de dados...")
+    index = faiss.IndexFlatL2(embeddings.shape[1])
+    index.add(embeddings)
+
+    os.makedirs(config.VECTORSTORE_PATH, exist_ok=True)
+    faiss.write_index(index, os.path.join(config.VECTORSTORE_PATH, "index.faiss"))
+    
+    with open(os.path.join(config.VECTORSTORE_PATH, "chunks.pkl"), "wb") as f:
+        pickle.dump(all_chunks_data, f)
+
+    print("Ingestão Concluída!")
 
 if __name__ == "__main__":
-    create_vector_db()
+    ingest_data()
