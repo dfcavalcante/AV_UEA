@@ -1,54 +1,49 @@
 #!/bin/bash
-# 'set -e' faz o script parar imediatamente se qualquer comando der erro (segurança)
 set -e
 
-# --- Definição de Caminhos (Baseados nas Variáveis de Ambiente do Dockerfile) ---
-# O caminho onde o modelo será salvo
-MODEL_PATH="/app/data/models/${GGUF_MODEL_NAME}"
-# O diretório do banco vetorial
+# Ajuste este caminho dependendo de onde o COPY colocou o arquivo
+# Se você copiou para /app/src/ingest.py ou /app/ingest.py
+INGEST_SCRIPT="/app/src/ingest.py" 
+MODEL_DIR="/app/data/models"
+MODEL_PATH="${MODEL_DIR}/${GGUF_MODEL_NAME}"
 VECTOR_STORE_PATH="/app/data/vectorstore"
-# O script Python de ingestão
-INGEST_SCRIPT="/app/src/ingest.py"
 
-echo "--- 🐳 Iniciando Assistente Virtual UEA (Engine: LlamaCpp / GGUF) ---"
+echo "--- Iniciando Assistente Virtual UEA ---"
 
-# --- ETAPA 1: Download do Modelo LLM ---
+# --- ETAPA 1: Download do Modelo (Seguro) ---
 if [ ! -f "$MODEL_PATH" ]; then
-  echo "--- ⬇️ Modelo GGUF não encontrado. Iniciando download... ---"
-  echo "URL: $GGUF_MODEL_URL"
+  echo "--- ⬇Modelo não encontrado. Baixando..."
   
-  # Usa curl com -L para seguir redirecionamentos do Hugging Face
-  # O -f garante que falhe se o HTTP code for erro (404, 500)
-  curl -L -f "$GGUF_MODEL_URL" -o "$MODEL_PATH"
+  # Baixa para um arquivo temporário primeiro
+  curl -L -f "$GGUF_MODEL_URL" -o "${MODEL_PATH}.tmp"
   
   if [ $? -eq 0 ]; then
-    echo "--- ✅ Download GGUF concluído com sucesso! ---"
+    mv "${MODEL_PATH}.tmp" "$MODEL_PATH"
+    echo "--- Download concluído! ---"
   else
-    echo "--- ❌ Erro ao baixar o modelo. Verifique sua conexão ou a URL. ---"
+    echo "--- Falha no download. ---"
+    rm -f "${MODEL_PATH}.tmp"
     exit 1
   fi
 else
-  echo "--- ✅ Modelo GGUF encontrado em cache. Pulando download. ---"
+  echo "--- Modelo já existe em cache. ---"
 fi
 
-# --- ETAPA 2: Ingestão de Dados (FAISS) ---
-# Verifica se a pasta existe E se tem arquivos dentro
-if [ ! -d "$VECTOR_STORE_PATH" ] || [ ! "$(ls -A $VECTOR_STORE_PATH)" ]; then
-  echo "--- 🔄 Índice Vetorial (FAISS) não encontrado ou vazio. ---"
-  echo "--- ▶️ Executando pipeline de ingestão (ingest.py)... ---"
-  
-  # Roda o script que baixa PDFs, faz chunking e salva os vetores
-  python $INGEST_SCRIPT
-  
-  echo "--- ✅ Ingestão e Indexação FAISS concluídas! ---"
+# --- ETAPA 2: Ingestão de Dados ---
+# Verifica se o script de ingestão existe antes de tentar rodar
+if [ -f "$INGEST_SCRIPT" ]; then
+    # Verifica se precisa rodar (se vetorstore está vazio)
+    if [ ! -d "$VECTOR_STORE_PATH" ] || [ -z "$(ls -A $VECTOR_STORE_PATH)" ]; then
+        echo "--- Criando Banco Vetorial... ---"
+        python "$INGEST_SCRIPT"
+    else
+        echo "--- Banco Vetorial já existe. ---"
+    fi
 else
-  echo "--- ✅ Índice Vetorial FAISS encontrado. Pulando etapa de ingestão. ---"
+    echo "--- AVISO: Script $INGEST_SCRIPT não encontrado. Pulando ingestão. ---"
 fi
 
-# --- ETAPA 3: Iniciar a API (Servidor) ---
-echo "--- 🚀 Iniciando o servidor FastAPI (Uvicorn) na porta 8000... ---"
-
-# Executa o Uvicorn.
-# --app-dir src: Define a pasta 'src' como a raiz para resolver as importações corretamente
-# exec: Substitui o processo shell pelo Python, garantindo que o container pare corretamente
+# --- ETAPA 3: Iniciar Servidor ---
+echo "--- Iniciando Uvicorn ---"
+# --app-dir src é vital se seu código está dentro da pasta src/
 exec uvicorn api.main:app --host 0.0.0.0 --port 8000 --app-dir src

@@ -7,4 +7,5 @@ pydantic
 faiss-cpu
 sentence-transformers
 llama-cpp-python
+langchain-huggingface
 pypdf

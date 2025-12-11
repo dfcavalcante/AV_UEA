@@ -6,6 +6,3 @@ venv/
 
 # IDEs
 .vscode/
-
-# Vector Stores
-data/vectorstore/
