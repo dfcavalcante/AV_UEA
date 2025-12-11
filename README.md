@@ -64,13 +64,13 @@ Caso prefira rodar o projeto diretamente em seu ambiente Python local (Windows/L
     ```
 
 2.  **Instale as dependências:**
-    Nosso `requirements.txt` já está otimizado para baixar a versão leve (CPU) do PyTorch.
+    O `requirements.txt` já está otimizado para baixar a versão leve (CPU) do PyTorch.
     ```bash
     pip install -r requirements.txt
     ```
 
 3.  **Realize a Ingestão dos Documentos:**
-    Como não estamos usando o script automático do Docker, você deve criar o banco vetorial manualmente na primeira vez.
+    Como não está usando o script automático do Docker, você deve criar o banco vetorial manualmente na primeira vez.
     ```bash
     python src/ingest.py
     ```
@@ -151,6 +151,9 @@ Para garantir maior qualidade e robustez, foram implementadas as seguintes funci
 
 3.  **Tratamento de Compatibilidade (Windows/Linux):**
     * Configuração de `.dockerignore` e tratamento de quebras de linha (LF/CRLF) no Dockerfile para garantir que o projeto rode em qualquer sistema operacional sem erros de script.
+
+4.  **Endpoint de Health Check (`GET /health`):**
+    * Implementação de uma rota de monitoramento que retorna o status da aplicação.
 
 ## ⚠️ Observações Técnicas e Limitações
 
