@@ -34,7 +34,7 @@ O projeto utiliza **Docker Compose** para orquestração. Não é necessário in
 1.  **Clone o repositório e entre na pasta:**
     ```bash
     git clone https://github.com/dfcavalcante/AV_UEA.git
-    cd assistente-uea
+    cd AV_UEA
     ```
 
 2.  **Execute o comando de inicialização:**
