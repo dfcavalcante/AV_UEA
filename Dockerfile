@@ -27,8 +27,8 @@ COPY . .
 # Prepara o volume e permissões
 RUN mkdir -p /app/data/vectorstore && chmod 777 /app/data/vectorstore
 
-# Define a permissão de execução para o script de inicialização
-RUN chmod +x start.sh
+# Converte quebras de linha Windows -> Linux e dá permissão
+RUN sed -i 's/\r$//' start.sh && chmod +x start.sh
 
 # Expõe a porta que o FastAPI usa
 EXPOSE 8000
